@@ -1,0 +1,332 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Multiplayer Quiz - Spatial UI</title>
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body {
+            perspective: 1000px;
+            overflow-x: hidden;
+        }
+
+        .remote-cursor {
+            position: absolute;
+            pointer-events: none;
+            z-index: 9999;
+            transition: transform 0.05s linear;
+        }
+
+        .glass-card {
+            background: rgba(18, 24, 38, 0.85);
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+            border: 1px solid rgba(255, 255, 255, 0.12);
+            transition: transform 0.1s ease-out;
+            transform-style: preserve-3d;
+        }
+
+        @keyframes spin-slow {
+            0% {
+                transform: rotate(0deg);
+            }
+
+            100% {
+                transform: rotate(360deg);
+            }
+        }
+
+        .animate-spin-slow {
+            animation: spin-slow 8s linear infinite;
+        }
+    </style>
+</head>
+
+<body class="bg-[#0b0f17] text-white min-h-screen flex flex-col items-center justify-center p-4 relative">
+
+    <!-- Top Ambient Glowing Orbs -->
+    <div
+        class="absolute top-10 left-1/2 -translate-x-1/2 w-96 h-60 bg-gradient-to-r from-blue-600/30 via-cyan-500/20 to-purple-600/30 blur-3xl rounded-full pointer-events-none">
+    </div>
+
+    <!-- Main Profile / Quiz Card with 3D Tilt Effect -->
+    <div id="tiltCard"
+        class="glass-card w-full max-w-lg rounded-3xl p-6 sm:p-8 shadow-2xl relative z-10 flex flex-col gap-6">
+
+        <!-- Header Status Bar -->
+        <div class="flex justify-between items-center">
+            <div
+                class="flex items-center gap-2 bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 text-[11px] px-3 py-1 rounded-full font-bold shadow-lg shadow-emerald-500/10">
+                <span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+                Open for Collab
+            </div>
+            <div id="connectionStatus"
+                class="text-xs font-mono text-slate-400 bg-slate-800/80 px-3 py-1 rounded-full border border-slate-700">
+                CONNECTING...
+            </div>
+        </div>
+
+        <!-- User Profile Avatar with Rotating Gradient Ring -->
+        <div class="flex flex-col items-center text-center gap-3">
+            <div class="relative w-24 h-24 flex items-center justify-center">
+                <div
+                    class="absolute inset-0 rounded-full bg-gradient-to-tr from-cyan-500 via-purple-500 to-pink-500 animate-spin-slow p-1 opacity-80">
+                    <div class="w-full h-full bg-[#0b0f17] rounded-full"></div>
+                </div>
+                <div
+                    class="relative z-10 w-20 h-20 bg-slate-900 rounded-full flex flex-col items-center justify-center shadow-inner">
+                    <span class="text-xs font-bold text-cyan-400 tracking-wider">ROOM</span>
+                    <span id="roomIdDisplay" class="text-[11px] font-mono text-slate-300">-----</span>
+                </div>
+            </div>
+
+            <div>
+                <h1 id="questionTitle"
+                    class="text-xl sm:text-2xl font-black bg-gradient-to-r from-white via-slate-200 to-slate-400 bg-clip-text text-transparent">
+                    Loading Poll...
+                </h1>
+                <p class="text-slate-400 text-xs mt-1">Spatial UI & Real-Time Sync System</p>
+            </div>
+        </div>
+
+        <!-- Config Controls -->
+        <div class="flex flex-col sm:flex-row gap-2">
+            <input type="text" id="userNameInput" value="Player"
+                onkeydown="if(event.key==='Enter') updateName()"
+                class="bg-slate-900/90 border border-slate-700/80 focus:border-cyan-400 text-white text-xs px-3 py-2 rounded-xl outline-none flex-1">
+            <button onclick="updateName()"
+                class="bg-slate-800 hover:bg-slate-700 text-xs text-slate-200 px-4 py-2 rounded-xl border border-slate-700 font-semibold transition">
+                Update Name
+            </button>
+            <button onclick="copyRoomLink()"
+                class="bg-cyan-500 hover:bg-cyan-400 text-slate-950 font-bold text-xs px-4 py-2 rounded-xl transition shadow-lg shadow-cyan-500/20">
+                Share Link
+            </button>
+        </div>
+
+        <!-- Online Users Badges / Tags -->
+        <div>
+            <div class="text-[11px] font-mono text-slate-400 uppercase tracking-widest mb-2">
+                ACTIVE PARTICIPANTS (<span id="userCount" class="text-cyan-400">0</span>)
+            </div>
+            <div id="usersList" class="flex flex-wrap gap-2"></div>
+        </div>
+
+        <!-- Poll / Quiz Options List -->
+        <div id="optionsContainer" class="flex flex-col gap-3"></div>
+
+        <!-- Bottom Stats Box -->
+        <div class="grid grid-cols-3 gap-2 pt-4 border-t border-slate-800/80 text-center">
+            <div>
+                <div class="text-base font-bold text-white" id="totalVotesDisplay">0</div>
+                <div class="text-[10px] text-slate-400 uppercase tracking-wider">TOTAL VOTES</div>
+            </div>
+            <div>
+                <div class="text-base font-bold text-cyan-400">99.4%</div>
+                <div class="text-[10px] text-slate-400 uppercase tracking-wider">RELIABILITY</div>
+            </div>
+            <div>
+                <div class="text-base font-bold text-emerald-400">LOW LATENCY</div>
+                <div class="text-[10px] text-slate-400 uppercase tracking-wider">SOCKET.IO</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Cursors Layer -->
+    <div id="cursorsContainer"></div>
+
+    <!-- Multiplayer Library -->
+    <script src="/multiplayer.js"></script>
+    <script>
+        let mp = null;
+        const cursorsMap = new Map();
+
+        // 3D Card Tilt Effect on Mouse Move
+        const card = document.getElementById('tiltCard');
+        window.addEventListener('mousemove', (e) => {
+            // Multiplayer cursor broadcast
+            if (mp) {
+                mp.updateCursor(e.clientX, e.clientY);
+            }
+
+            // Card 3D Tilt calculation
+            const rect = card.getBoundingClientRect();
+            const x = e.clientX - rect.left - rect.width / 2;
+            const y = e.clientY - rect.top - rect.height / 2;
+
+            // Limit tilt angle for smooth look
+            const rotateX = (y / 25);
+            const rotateY = (-x / 25);
+
+            card.style.transform = `perspective(1000px) rotateX(${rotateX}deg) rotateY(${rotateY}deg) scale3d(1.01, 1.01, 1.01)`;
+        });
+
+        card.addEventListener('mouseleave', () => {
+            card.style.transform = `perspective(1000px) rotateX(0deg) rotateY(0deg) scale3d(1, 1, 1)`;
+            card.style.transition = 'transform 0.5s ease-out';
+        });
+
+        card.addEventListener('mouseenter', () => {
+            card.style.transition = 'none';
+        });
+
+        window.addEventListener('DOMContentLoaded', async () => {
+            const serverUrl = window.location.origin;
+            mp = Multiplayer.connect(serverUrl);
+
+            const urlParams = new URLSearchParams(location.search);
+            let roomId = urlParams.get('id');
+            if (!roomId) {
+                roomId = 'room-' + Math.random().toString(36).substring(2, 9);
+                urlParams.set('id', roomId);
+                history.replaceState({}, '', '?' + urlParams.toString());
+            }
+            document.getElementById('roomIdDisplay').textContent = roomId;
+
+            const randomName = "Player " + Math.floor(Math.random() * 1000);
+            document.getElementById('userNameInput').value = randomName;
+
+            try {
+                await mp.join(roomId, { name: randomName });
+                await mp.initState({
+                    poll: {
+                        question: "Which technology stack fits best?",
+                        options: ["#NodeJS & Express", "#SocketIO Realtime", "#Tailwind CSS", "#React / NextJS"],
+                        votes: { 0: 0, 1: 0, 2: 0, 3: 0 },
+                        userVotes: {}
+                    }
+                });
+            } catch (err) {
+                console.error("Error joining:", err);
+            }
+
+            mp.onStatus(status => {
+                const badge = document.getElementById('connectionStatus');
+                if (status === 'connected') {
+                    badge.textContent = "CONNECTED";
+                    badge.className = "text-xs font-mono text-emerald-400 bg-emerald-500/10 px-3 py-1 rounded-full border border-emerald-500/30";
+                } else {
+                    badge.textContent = status.toUpperCase();
+                    badge.className = "text-xs font-mono text-rose-400 bg-rose-500/10 px-3 py-1 rounded-full border border-rose-500/30";
+                }
+            });
+
+            mp.onUsers(users => {
+                document.getElementById('userCount').textContent = users.length;
+                const container = document.getElementById('usersList');
+                container.innerHTML = users.map(u => `
+                    <span class="bg-slate-900/80 border border-slate-700/70 text-slate-300 text-xs px-3 py-1 rounded-full flex items-center gap-1.5 font-medium">
+                        <span class="w-2 h-2 rounded-full" style="background-color: ${u.color || '#38bdf8'}"></span>
+                        ${u.name} ${u.sessionId === mp.getSessionId() ? '(You)' : ''}
+                    </span>
+                `).join('');
+            });
+
+            mp.onState(state => {
+                if (!state || !state.poll) return;
+                document.getElementById('questionTitle').textContent = state.poll.question;
+                const optContainer = document.getElementById('optionsContainer');
+                optContainer.innerHTML = '';
+
+                let totalVotes = 0;
+                Object.values(state.poll.votes || {}).forEach(v => totalVotes += v);
+                document.getElementById('totalVotesDisplay').textContent = totalVotes;
+
+                state.poll.options.forEach((opt, index) => {
+                    const votesCount = state.poll.votes ? (state.poll.votes[index] || 0) : 0;
+                    const isSelected = state.poll.userVotes && state.poll.userVotes[mp.getSessionId()] === index;
+
+                    const btn = document.createElement('button');
+                    btn.className = `w-full text-left p-3.5 rounded-2xl border transition-all flex justify-between items-center group relative overflow-hidden ${isSelected
+                            ? 'bg-cyan-500/10 border-cyan-400 text-white shadow-lg shadow-cyan-500/10'
+                            : 'bg-slate-900/60 border-slate-800 hover:border-slate-700 text-slate-300 hover:bg-slate-900'
+                        }`;
+
+                    btn.innerHTML = `
+                        <span class="font-medium text-xs sm:text-sm z-10">${opt}</span>
+                        <span class="text-xs font-bold px-2.5 py-1 rounded-lg bg-slate-800/90 text-cyan-400 border border-slate-700 z-10">
+                            ${votesCount} votes
+                        </span>
+                    `;
+
+                    btn.onclick = () => {
+                        const currentPoll = JSON.parse(JSON.stringify(state.poll));
+                        if (!currentPoll.votes) currentPoll.votes = {};
+                        if (!currentPoll.userVotes) currentPoll.userVotes = {};
+
+                        const oldVote = currentPoll.userVotes[mp.getSessionId()];
+
+                        // Agar same option already selected hai to kuch mat karo
+                        if (oldVote === index) return;
+
+                        // Purana vote remove karo agar pehle kisi aur option pe vote kiya tha
+                        if (oldVote !== undefined) {
+                            currentPoll.votes[oldVote] = Math.max(0, (currentPoll.votes[oldVote] || 1) - 1);
+                        }
+
+                        // Naya vote add karo
+                        currentPoll.votes[index] = (currentPoll.votes[index] || 0) + 1;
+                        currentPoll.userVotes[mp.getSessionId()] = index;
+
+                        mp.setState({ poll: currentPoll });
+                    };
+                    optContainer.appendChild(btn);
+                });
+            });
+
+            mp.onCursors(cursors => {
+                const container = document.getElementById('cursorsContainer');
+                const activeIds = new Set(Object.keys(cursors));
+
+                for (let [id, el] of cursorsMap.entries()) {
+                    if (!activeIds.has(id)) {
+                        el.remove();
+                        cursorsMap.delete(id);
+                    }
+                }
+
+                Object.values(cursors).forEach(c => {
+                    let el = cursorsMap.get(c.sessionId);
+                    if (!el) {
+                        el = document.createElement('div');
+                        el.className = 'remote-cursor flex items-center gap-1.5';
+                        el.innerHTML = `
+                            <svg width="20" height="20" viewBox="0 0 24 24" fill="${c.color || '#38bdf8'}" stroke="white" stroke-width="1.5" class="drop-shadow-lg">
+                                <polygon points="5 3 19 12 12 14 9 21 5 3"></polygon>
+                            </svg>
+                            <span class="bg-slate-900/95 text-cyan-300 text-[11px] font-bold px-2.5 py-1 rounded-lg shadow-xl border border-slate-700/80 backdrop-blur-md whitespace-nowrap -translate-y-2 animate-bounce">${c.name || 'User'}</span>
+                        `;
+                        container.appendChild(el);
+                        cursorsMap.set(c.sessionId, el);
+                    }
+                    el.style.transform = `translate(${c.x}px, ${c.y}px)`;
+                });
+            });
+        });
+
+        function copyRoomLink() {
+            navigator.clipboard.writeText(window.location.href);
+            alert("Room link copied to clipboard!");
+        }
+
+        function updateName() {
+            const newName = document.getElementById('userNameInput').value;
+            if (mp && newName) {
+                const urlParams = new URLSearchParams(location.search);
+                mp.join(urlParams.get('id'), { name: newName });
+            }
+        }
+
+        // Tab band hone par user ko room se remove karo
+        window.addEventListener('beforeunload', () => {
+            if (mp) {
+                mp.leave();
+            }
+        });
+    </script>
+</body>
+
+</html>

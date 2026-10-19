@@ -1,0 +1,34 @@
+{
+  "name": "lightweight-multiplayer",
+  "version": "1.0.0",
+  "description": "Production-minded, lightweight JavaScript library for real-time multiplayer and collaboration in ~10 lines of code.",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js",
+    "test": "node --test tests/**/*.test.js"
+  },
+  "keywords": [
+    "multiplayer",
+    "realtime",
+    "collaboration",
+    "websockets",
+    "socket.io",
+    "cursors",
+    "presence"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2",
+    "socket.io": "^4.8.1"
+  },
+  "devDependencies": {
+    "socket.io-client": "^4.8.1"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
