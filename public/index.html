@@ -9,7 +9,6 @@
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
         body {
-            perspective: 1000px;
             overflow-x: hidden;
         }
 
@@ -25,8 +24,6 @@
             backdrop-filter: blur(20px);
             -webkit-backdrop-filter: blur(20px);
             border: 1px solid rgba(255, 255, 255, 0.12);
-            transition: transform 0.1s ease-out;
-            transform-style: preserve-3d;
         }
 
         @keyframes spin-slow {
@@ -94,8 +91,7 @@
 
         <!-- Config Controls -->
         <div class="flex flex-col sm:flex-row gap-2">
-            <input type="text" id="userNameInput" value="Player"
-                onkeydown="if(event.key==='Enter') updateName()"
+            <input type="text" id="userNameInput" value="Player" onkeydown="if(event.key==='Enter') updateName()"
                 class="bg-slate-900/90 border border-slate-700/80 focus:border-cyan-400 text-white text-xs px-3 py-2 rounded-xl outline-none flex-1">
             <button onclick="updateName()"
                 class="bg-slate-800 hover:bg-slate-700 text-xs text-slate-200 px-4 py-2 rounded-xl border border-slate-700 font-semibold transition">
@@ -144,33 +140,11 @@
         let mp = null;
         const cursorsMap = new Map();
 
-        // 3D Card Tilt Effect on Mouse Move
-        const card = document.getElementById('tiltCard');
+        // Multiplayer cursor broadcast on mouse move
         window.addEventListener('mousemove', (e) => {
-            // Multiplayer cursor broadcast
             if (mp) {
                 mp.updateCursor(e.clientX, e.clientY);
             }
-
-            // Card 3D Tilt calculation
-            const rect = card.getBoundingClientRect();
-            const x = e.clientX - rect.left - rect.width / 2;
-            const y = e.clientY - rect.top - rect.height / 2;
-
-            // Limit tilt angle for smooth look
-            const rotateX = (y / 25);
-            const rotateY = (-x / 25);
-
-            card.style.transform = `perspective(1000px) rotateX(${rotateX}deg) rotateY(${rotateY}deg) scale3d(1.01, 1.01, 1.01)`;
-        });
-
-        card.addEventListener('mouseleave', () => {
-            card.style.transform = `perspective(1000px) rotateX(0deg) rotateY(0deg) scale3d(1, 1, 1)`;
-            card.style.transition = 'transform 0.5s ease-out';
-        });
-
-        card.addEventListener('mouseenter', () => {
-            card.style.transition = 'none';
         });
 
         window.addEventListener('DOMContentLoaded', async () => {
@@ -241,8 +215,8 @@
 
                     const btn = document.createElement('button');
                     btn.className = `w-full text-left p-3.5 rounded-2xl border transition-all flex justify-between items-center group relative overflow-hidden ${isSelected
-                            ? 'bg-cyan-500/10 border-cyan-400 text-white shadow-lg shadow-cyan-500/10'
-                            : 'bg-slate-900/60 border-slate-800 hover:border-slate-700 text-slate-300 hover:bg-slate-900'
+                        ? 'bg-cyan-500/10 border-cyan-400 text-white shadow-lg shadow-cyan-500/10'
+                        : 'bg-slate-900/60 border-slate-800 hover:border-slate-700 text-slate-300 hover:bg-slate-900'
                         }`;
 
                     btn.innerHTML = `
