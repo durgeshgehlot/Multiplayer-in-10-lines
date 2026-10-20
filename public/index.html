@@ -97,18 +97,30 @@
                 class="bg-slate-800 hover:bg-slate-700 text-xs text-slate-200 px-4 py-2 rounded-xl border border-slate-700 font-semibold transition">
                 Update Name
             </button>
-            <button onclick="copyRoomLink()"
+            <button id="shareLinkBtn" onclick="copyRoomLink()"
                 class="bg-cyan-500 hover:bg-cyan-400 text-slate-950 font-bold text-xs px-4 py-2 rounded-xl transition shadow-lg shadow-cyan-500/20">
                 Share Link
             </button>
         </div>
 
-        <!-- Online Users Badges / Tags -->
-        <div>
-            <div class="text-[11px] font-mono text-slate-400 uppercase tracking-widest mb-2">
+        <!-- Host View: Full collapsible participants list -->
+        <div id="hostParticipants" style="display: none;">
+            <div onclick="toggleParticipants()"
+                class="text-[11px] font-mono text-slate-400 uppercase tracking-widest mb-2 cursor-pointer select-none flex items-center gap-2 hover:text-slate-200 transition-colors">
+                <span id="participantChevron" class="text-[10px] transition-transform duration-300"
+                    style="display:inline-block;">▶</span>
                 ACTIVE PARTICIPANTS (<span id="userCount" class="text-cyan-400">0</span>)
             </div>
-            <div id="usersList" class="flex flex-wrap gap-2"></div>
+            <div id="usersList" class="flex flex-col gap-2 overflow-hidden transition-all duration-300"
+                style="max-height: 0; opacity: 0;"></div>
+        </div>
+
+        <!-- Guest View: Only participant count -->
+        <div id="guestParticipants" style="display: none;">
+            <div class="text-[11px] font-mono text-slate-400 uppercase tracking-widest mb-2 flex items-center gap-2">
+                <span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+                <span id="guestUserCount" class="text-cyan-400 text-sm font-bold">0</span> PARTICIPANTS LIVE
+            </div>
         </div>
 
         <!-- Poll / Quiz Options List -->
@@ -153,10 +165,19 @@
 
             const urlParams = new URLSearchParams(location.search);
             let roomId = urlParams.get('id');
+            const isHost = !roomId;
             if (!roomId) {
                 roomId = 'room-' + Math.random().toString(36).substring(2, 9);
                 urlParams.set('id', roomId);
                 history.replaceState({}, '', '?' + urlParams.toString());
+            }
+
+            // Show correct participants section based on role
+            if (isHost) {
+                document.getElementById('hostParticipants').style.display = 'block';
+            } else {
+                document.getElementById('guestParticipants').style.display = 'block';
+                document.getElementById('shareLinkBtn').style.display = 'none';
             }
             document.getElementById('roomIdDisplay').textContent = roomId;
 
@@ -190,13 +211,27 @@
 
             mp.onUsers(users => {
                 document.getElementById('userCount').textContent = users.length;
+                document.getElementById('guestUserCount').textContent = users.length;
                 const container = document.getElementById('usersList');
-                container.innerHTML = users.map(u => `
-                    <span class="bg-slate-900/80 border border-slate-700/70 text-slate-300 text-xs px-3 py-1 rounded-full flex items-center gap-1.5 font-medium">
-                        <span class="w-2 h-2 rounded-full" style="background-color: ${u.color || '#38bdf8'}"></span>
-                        ${u.name} ${u.sessionId === mp.getSessionId() ? '(You)' : ''}
-                    </span>
-                `).join('');
+
+                // Sort: host (earliest joinedAt) first, then by join order
+                const sorted = [...users].sort((a, b) => (a.joinedAt || 0) - (b.joinedAt || 0));
+
+                container.innerHTML = sorted.map((u, idx) => {
+                    const isYou = u.sessionId === mp.getSessionId();
+                    const isHost = idx === 0;
+                    return `
+                    <div class="bg-slate-900/80 border border-slate-700/70 text-slate-300 text-xs px-3 py-2 rounded-xl flex items-center gap-2 font-medium w-full">
+                        <span class="w-2.5 h-2.5 rounded-full flex-shrink-0" style="background-color: ${u.color || '#38bdf8'}"></span>
+                        <span class="truncate flex-1">${u.name}${isYou ? ' (You)' : ''}</span>
+                        ${isHost ? '<span class="bg-amber-500/15 border border-amber-500/40 text-amber-400 text-[9px] px-2 py-0.5 rounded-md font-bold tracking-wider flex-shrink-0">HOST</span>' : ''}
+                    </div>`;
+                }).join('');
+
+                // If participants panel is open, recalculate max-height
+                if (participantsOpen) {
+                    container.style.maxHeight = container.scrollHeight + 'px';
+                }
             });
 
             mp.onState(state => {
@@ -280,6 +315,22 @@
                 });
             });
         });
+
+        let participantsOpen = false;
+        function toggleParticipants() {
+            participantsOpen = !participantsOpen;
+            const list = document.getElementById('usersList');
+            const chevron = document.getElementById('participantChevron');
+            if (participantsOpen) {
+                list.style.maxHeight = list.scrollHeight + 'px';
+                list.style.opacity = '1';
+                chevron.style.transform = 'rotate(90deg)';
+            } else {
+                list.style.maxHeight = '0';
+                list.style.opacity = '0';
+                chevron.style.transform = 'rotate(0deg)';
+            }
+        }
 
         function copyRoomLink() {
             navigator.clipboard.writeText(window.location.href);
