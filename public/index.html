@@ -93,7 +93,7 @@
         <div class="flex flex-col sm:flex-row gap-2">
             <input type="text" id="userNameInput" value="Player" onkeydown="if(event.key==='Enter') updateName()"
                 class="bg-slate-900/90 border border-slate-700/80 focus:border-cyan-400 text-white text-xs px-3 py-2 rounded-xl outline-none flex-1">
-            <button onclick="updateName()"
+            <button id="updateNameBtn" onclick="updateName()"
                 class="bg-slate-800 hover:bg-slate-700 text-xs text-slate-200 px-4 py-2 rounded-xl border border-slate-700 font-semibold transition">
                 Update Name
             </button>
@@ -101,9 +101,35 @@
                 class="bg-cyan-500 hover:bg-cyan-400 text-slate-950 font-bold text-xs px-4 py-2 rounded-xl transition shadow-lg shadow-cyan-500/20">
                 Share Link
             </button>
+            <button id="hostPasswordControls" onclick="openPasswordSettings()" class="hidden bg-slate-800 hover:bg-slate-700 text-xs text-slate-200 px-4 py-2 rounded-xl border border-slate-700 font-semibold transition">Set password</button>
+        </div>
+        <div id="passwordSettings" class="hidden rounded-xl border border-slate-700 bg-slate-900/90 p-4">
+            <label for="roomPasswordInput" class="block text-sm font-semibold mb-2">Room password</label>
+            <div class="flex flex-wrap gap-2">
+                <input id="roomPasswordInput" type="password" maxlength="128" placeholder="Create a password" onkeydown="if(event.key==='Enter'){event.preventDefault();saveRoomPassword();}"
+                    class="bg-slate-950 border border-slate-700 focus:border-cyan-400 text-white text-sm px-3 py-2 rounded-lg outline-none flex-1 min-w-40">
+                <button id="toggleRoomPasswordBtn" type="button" onclick="toggleRoomPasswordVisibility()" class="bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs px-3 py-2 rounded-lg border border-slate-700">Show</button>
+                <button onclick="saveRoomPassword()" class="bg-cyan-500 hover:bg-cyan-400 text-slate-950 text-xs px-4 py-2 rounded-lg font-bold">Save</button>
+                <button onclick="removeRoomPassword()" class="bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs px-4 py-2 rounded-lg border border-slate-700">Remove</button>
+            </div>
+            <p id="roomPasswordStatus" class="text-xs text-slate-400 mt-2"></p>
+        </div>
+        <div id="guestNamePrompt" class="hidden rounded-xl border border-cyan-500/30 bg-cyan-500/10 p-4">
+            <label for="joinNameInput" class="block text-sm font-semibold mb-2">Your player name</label>
+            <input id="joinNameInput" type="text" maxlength="50" placeholder="Enter your player name" onkeydown="handleNameEnter(event)" class="bg-slate-900 border border-slate-700 text-white text-sm px-3 py-2 rounded-lg outline-none w-full">
+            <p id="nameError" class="text-rose-300 text-xs mt-2"></p>
+            <button id="joinWithoutPasswordBtn" onclick="submitGuestJoin()" class="hidden bg-cyan-500 text-slate-950 font-bold text-sm px-4 py-2 rounded-lg mt-3">Join room</button>
+        </div>
+        <div id="passwordPrompt" class="hidden rounded-xl border border-rose-500/30 bg-rose-500/10 p-4">
+            <label for="joinPasswordInput" class="block text-sm font-semibold mb-2">Host password required</label>
+            <div class="flex flex-col gap-2">
+                <input id="joinPasswordInput" type="password" placeholder="Enter room password" onkeydown="if(event.key==='Enter') submitRoomPassword()" class="bg-slate-900 border border-slate-700 text-white text-sm px-3 py-2 rounded-lg outline-none flex-1">
+                <button id="joinWithPasswordBtn" onclick="submitRoomPassword()" class="bg-cyan-500 text-slate-950 font-bold text-sm px-4 py-2 rounded-lg">Continue</button>
+            </div>
+            <p id="passwordError" class="text-rose-300 text-xs mt-2"></p>
         </div>
 
-        <!-- Host View: Full collapsible participants list -->
+        <!-- Host View: Clickable collapsible participants list -->
         <div id="hostParticipants" style="display: none;">
             <div onclick="toggleParticipants()"
                 class="text-[11px] font-mono text-slate-400 uppercase tracking-widest mb-2 cursor-pointer select-none flex items-center gap-2 hover:text-slate-200 transition-colors">
@@ -150,6 +176,10 @@
     <script src="/multiplayer.js"></script>
     <script>
         let mp = null;
+        let activeRoomId = null;
+        let joiningOptions = null;
+        let roomHasPassword = false;
+        let guestPasswordRequired = false;
         const cursorsMap = new Map();
 
         // Multiplayer cursor broadcast on mouse move
@@ -165,37 +195,76 @@
 
             const urlParams = new URLSearchParams(location.search);
             let roomId = urlParams.get('id');
-            const isHost = !roomId;
+            let isHost = !roomId;
+            const hostRoomStorageKey = `mp_host_room_${serverUrl}`;
+            if (roomId) {
+                try {
+                    isHost = sessionStorage.getItem(hostRoomStorageKey) === roomId;
+                } catch (e) {
+                    // Continue as a guest if browser storage is unavailable.
+                }
+            }
             if (!roomId) {
                 roomId = 'room-' + Math.random().toString(36).substring(2, 9);
                 urlParams.set('id', roomId);
                 history.replaceState({}, '', '?' + urlParams.toString());
-            }
-
-            // Show correct participants section based on role
-            if (isHost) {
-                document.getElementById('hostParticipants').style.display = 'block';
-            } else {
-                document.getElementById('guestParticipants').style.display = 'block';
-                document.getElementById('shareLinkBtn').style.display = 'none';
+                try {
+                    sessionStorage.setItem(hostRoomStorageKey, roomId);
+                } catch (e) {
+                    // Host controls remain available for this page load.
+                }
             }
             document.getElementById('roomIdDisplay').textContent = roomId;
+            activeRoomId = roomId;
+
+            // Host ko participants list dikhao, guest ko sirf count
+            if (isHost) {
+                document.getElementById('hostParticipants').style.display = 'block';
+                document.getElementById('hostPasswordControls').classList.remove('hidden');
+            } else {
+                document.getElementById('shareLinkBtn').style.display = 'none';
+                document.getElementById('userNameInput').style.display = 'none';
+                document.getElementById('updateNameBtn').style.display = 'none';
+                document.getElementById('guestParticipants').style.display = 'block';
+            }
 
             const randomName = "Player " + Math.floor(Math.random() * 1000);
             document.getElementById('userNameInput').value = randomName;
+            document.getElementById('joinNameInput').value = randomName;
 
+            joiningOptions = { name: randomName };
+            if (isHost) {
+                try {
+                    const savedPassword = sessionStorage.getItem(`mp_host_password_${roomId}`);
+                    if (savedPassword) joiningOptions.password = savedPassword;
+                } catch (e) {
+                    // The host can still join passwordless rooms if storage is unavailable.
+                }
+            }
             try {
-                await mp.join(roomId, { name: randomName });
-                await mp.initState({
-                    poll: {
-                        question: "Which technology stack fits best?",
-                        options: ["#NodeJS & Express", "#SocketIO Realtime", "#Tailwind CSS", "#React / NextJS"],
-                        votes: { 0: 0, 1: 0, 2: 0, 3: 0 },
-                        userVotes: {}
-                    }
-                });
+                const requiresPassword = !isHost && await Multiplayer.checkRoomPassword(serverUrl, roomId);
+                if (requiresPassword) {
+                    showPasswordPrompt(true);
+                } else if (!isHost) {
+                    showPasswordPrompt(false);
+                } else {
+                    await mp.join(roomId, joiningOptions);
+                    await mp.initState({
+                        poll: {
+                            question: "Which technology stack fits best?",
+                            options: ["#NodeJS & Express", "#SocketIO Realtime", "#Tailwind CSS", "#React / NextJS"],
+                            votes: { 0: 0, 1: 0, 2: 0, 3: 0 },
+                            userVotes: {}
+                        }
+                    });
+                }
             } catch (err) {
-                console.error("Error joining:", err);
+                if (!isHost && err.message === 'WRONG_PASSWORD') {
+                    showPasswordPrompt(true);
+                    document.getElementById('joinPasswordInput').focus();
+                } else {
+                    console.error("Error joining:", err);
+                }
             }
 
             mp.onStatus(status => {
@@ -213,29 +282,20 @@
                 document.getElementById('userCount').textContent = users.length;
                 document.getElementById('guestUserCount').textContent = users.length;
                 const container = document.getElementById('usersList');
-
-                // Sort: host (earliest joinedAt) first, then by join order
-                const sorted = [...users].sort((a, b) => (a.joinedAt || 0) - (b.joinedAt || 0));
-
-                container.innerHTML = sorted.map((u, idx) => {
-                    const isYou = u.sessionId === mp.getSessionId();
-                    const isHost = idx === 0;
-                    return `
+                container.innerHTML = users.map(u => `
                     <div class="bg-slate-900/80 border border-slate-700/70 text-slate-300 text-xs px-3 py-2 rounded-xl flex items-center gap-2 font-medium w-full">
                         <span class="w-2.5 h-2.5 rounded-full flex-shrink-0" style="background-color: ${u.color || '#38bdf8'}"></span>
-                        <span class="truncate flex-1">${u.name}${isYou ? ' (You)' : ''}</span>
-                        ${isHost ? '<span class="bg-amber-500/15 border border-amber-500/40 text-amber-400 text-[9px] px-2 py-0.5 rounded-md font-bold tracking-wider flex-shrink-0">HOST</span>' : ''}
-                    </div>`;
-                }).join('');
-
-                // If participants panel is open, recalculate max-height
+                        <span class="truncate">${u.name} ${u.sessionId === mp.getSessionId() ? '(You)' : ''}</span>
+                    </div>
+                `).join('');
+                // Agar participants panel open hai to max-height update karo
                 if (participantsOpen) {
                     container.style.maxHeight = container.scrollHeight + 'px';
                 }
             });
 
             mp.onState(state => {
-                if (!state || !state.poll) return;
+                if (!state || !state.poll || !Array.isArray(state.poll.options)) return;
                 document.getElementById('questionTitle').textContent = state.poll.question;
                 const optContainer = document.getElementById('optionsContainer');
                 optContainer.innerHTML = '';
@@ -254,12 +314,13 @@
                         : 'bg-slate-900/60 border-slate-800 hover:border-slate-700 text-slate-300 hover:bg-slate-900'
                         }`;
 
-                    btn.innerHTML = `
-                        <span class="font-medium text-xs sm:text-sm z-10">${opt}</span>
-                        <span class="text-xs font-bold px-2.5 py-1 rounded-lg bg-slate-800/90 text-cyan-400 border border-slate-700 z-10">
-                            ${votesCount} votes
-                        </span>
-                    `;
+                    const optionLabel = document.createElement('span');
+                    optionLabel.className = 'font-medium text-xs sm:text-sm z-10';
+                    optionLabel.textContent = String(opt);
+                    const voteBadge = document.createElement('span');
+                    voteBadge.className = 'text-xs font-bold px-2.5 py-1 rounded-lg bg-slate-800/90 text-cyan-400 border border-slate-700 z-10';
+                    voteBadge.textContent = `${votesCount} votes`;
+                    btn.append(optionLabel, voteBadge);
 
                     btn.onclick = () => {
                         const currentPoll = JSON.parse(JSON.stringify(state.poll));
@@ -332,9 +393,143 @@
             }
         }
 
-        function copyRoomLink() {
-            navigator.clipboard.writeText(window.location.href);
-            alert("Room link copied to clipboard!");
+        async function copyRoomLink() {
+            try {
+                if (!navigator.clipboard || !navigator.clipboard.writeText) throw new Error('Clipboard unavailable');
+                await navigator.clipboard.writeText(window.location.href);
+                alert("Room link copied to clipboard!");
+            } catch (err) {
+                window.prompt('Copy this room link:', window.location.href);
+            }
+        }
+
+        function openPasswordSettings() {
+            const panel = document.getElementById('passwordSettings');
+            panel.classList.toggle('hidden');
+            if (panel.classList.contains('hidden')) {
+                document.getElementById('roomPasswordInput').type = 'password';
+                document.getElementById('toggleRoomPasswordBtn').textContent = 'Show';
+                return;
+            }
+            const input = document.getElementById('roomPasswordInput');
+            document.getElementById('roomPasswordStatus').textContent = 'Loading room password…';
+            mp.emitRaw('room:getPassword', { roomId: activeRoomId, sessionId: mp.getSessionId() }, (result) => {
+                if (!result || !result.success) {
+                    document.getElementById('roomPasswordStatus').textContent = result?.error || 'Could not load room password.';
+                    return;
+                }
+                roomHasPassword = result.hasPassword;
+                input.value = result.password || '';
+                input.placeholder = roomHasPassword ? 'Enter a new password' : 'Create a password';
+                document.getElementById('roomPasswordStatus').textContent = roomHasPassword ? 'A password is currently set.' : 'No password is currently set.';
+                input.focus();
+            });
+        }
+
+        function saveRoomPassword() {
+            const password = document.getElementById('roomPasswordInput').value.trim();
+            if (!password) {
+                document.getElementById('roomPasswordStatus').textContent = 'Enter a password, or choose Remove to clear it.';
+                return;
+            }
+            updateRoomPassword(password);
+        }
+
+        function toggleRoomPasswordVisibility() {
+            const input = document.getElementById('roomPasswordInput');
+            const button = document.getElementById('toggleRoomPasswordBtn');
+            const showPassword = input.type === 'password';
+            input.type = showPassword ? 'text' : 'password';
+            button.textContent = showPassword ? 'Hide' : 'Show';
+        }
+
+        function removeRoomPassword() {
+            updateRoomPassword('');
+        }
+
+        function updateRoomPassword(password) {
+            mp.emitRaw('room:setPassword', { roomId: activeRoomId, sessionId: mp.getSessionId(), password }, (result) => {
+                if (!result || !result.success) {
+                    document.getElementById('roomPasswordStatus').textContent = result?.error || 'Could not update password.';
+                    return;
+                }
+                roomHasPassword = result.hasPassword;
+                mp.roomPassword = result.hasPassword ? password : null;
+                try {
+                    const storageKey = `mp_host_password_${activeRoomId}`;
+                    if (result.hasPassword) sessionStorage.setItem(storageKey, password);
+                    else sessionStorage.removeItem(storageKey);
+                } catch (e) {
+                    // The server remains authoritative when browser storage is unavailable.
+                }
+                document.getElementById('roomPasswordStatus').textContent = roomHasPassword ? 'Password set. Invited participants will need it to open the link.' : 'Password removed. The link now opens the room directly.';
+                document.getElementById('roomPasswordInput').value = result.hasPassword ? password : '';
+            });
+        }
+
+        async function submitRoomPassword() {
+            const password = document.getElementById('joinPasswordInput').value;
+            const error = document.getElementById('passwordError');
+            error.textContent = '';
+            await joinGuest(password, document.getElementById('joinWithPasswordBtn'), error);
+        }
+
+        async function submitGuestJoin() {
+            await joinGuest(null, document.getElementById('joinWithoutPasswordBtn'), document.getElementById('nameError'));
+        }
+
+        function handleNameEnter(event) {
+            if (event.key !== 'Enter') return;
+            if (guestPasswordRequired) document.getElementById('joinPasswordInput').focus();
+            else submitGuestJoin();
+        }
+
+        async function joinGuest(password, submitButton, error) {
+            const playerName = document.getElementById('joinNameInput').value.trim();
+            error.textContent = '';
+            if (!playerName) {
+                error.textContent = 'Apna player name enter karein.';
+                document.getElementById('joinNameInput').focus();
+                return;
+            }
+            submitButton.disabled = true;
+            try {
+                joiningOptions = { ...joiningOptions, name: playerName };
+                await mp.join(activeRoomId, { ...joiningOptions, password: password || null });
+                const guestNameDisplay = document.getElementById('userNameInput');
+                guestNameDisplay.value = playerName;
+                guestNameDisplay.readOnly = true;
+                guestNameDisplay.style.display = 'block';
+                const prompt = document.getElementById('passwordPrompt');
+                prompt.classList.add('hidden');
+                prompt.style.display = 'none';
+                const namePrompt = document.getElementById('guestNamePrompt');
+                namePrompt.classList.add('hidden');
+                namePrompt.style.display = 'none';
+                document.getElementById('joinPasswordInput').value = '';
+                await mp.initState({
+                    poll: { question: "Which technology stack fits best?", options: ["#NodeJS & Express", "#SocketIO Realtime", "#Tailwind CSS", "#React / NextJS"], votes: { 0: 0, 1: 0, 2: 0, 3: 0 }, userVotes: {} }
+                });
+            } catch (err) {
+                if (err.message === 'WRONG_PASSWORD') document.getElementById('passwordError').textContent = 'Password galat hai. Dobara try karein.';
+                else error.textContent = 'Room join nahi ho paya. Dobara try karein.';
+            } finally {
+                submitButton.disabled = false;
+            }
+        }
+
+        function showPasswordPrompt(requiresPassword) {
+            guestPasswordRequired = requiresPassword;
+            const namePrompt = document.getElementById('guestNamePrompt');
+            namePrompt.classList.remove('hidden');
+            namePrompt.style.display = 'block';
+            document.getElementById('joinWithoutPasswordBtn').classList.toggle('hidden', requiresPassword);
+            if (requiresPassword) {
+                const prompt = document.getElementById('passwordPrompt');
+                prompt.classList.remove('hidden');
+                prompt.style.display = 'block';
+            }
+            document.getElementById('joinNameInput').focus();
         }
 
         function updateName() {

@@ -62,8 +62,22 @@ function setupSocketHandlers(io, roomManager, options = {}) {
         const name = sanitizeDisplayName(payload.name);
         const color = validateColor(payload.color);
 
-        // Get or create room
+        // Only accept a password on the first creation of a room. A room with
+        // zero online participants may still have an existing host password.
+        const isNewRoom = !roomManager.hasRoom(roomId);
         const room = roomManager.getRoom(roomId, true);
+
+        if (isNewRoom && payload.password) {
+          if (typeof payload.password !== 'string' || payload.password.trim().length > 128) {
+            return callback({ success: false, error: 'Password must be 1-128 characters' });
+          }
+          room.setPassword(payload.password);
+        }
+
+        // A known/reused session ID must never skip the room password check.
+        if (room.hasPassword() && !room.verifyPassword(payload.password)) {
+          return callback({ success: false, error: 'WRONG_PASSWORD' });
+        }
 
         // Add or update participant
         const { participant } = room.addOrUpdateParticipant({
@@ -110,6 +124,46 @@ function setupSocketHandlers(io, roomManager, options = {}) {
     });
 
     /**
+     * Check if a room requires a password (pre-join check for guests)
+     */
+    socket.on('room:checkPassword', (payload, callback = () => {}) => {
+      try {
+        if (!payload || !payload.roomId) {
+          return callback({ success: false, error: 'roomId required' });
+        }
+        const room = roomManager.getRoom(payload.roomId);
+        if (!room) {
+          return callback({ success: true, requiresPassword: false });
+        }
+        callback({ success: true, requiresPassword: room.hasPassword() });
+      } catch (err) {
+        callback({ success: false, error: 'Failed to check room' });
+      }
+    });
+
+    socket.on('room:setPassword', (payload, callback = () => {}) => {
+      const room = payload && roomManager.getRoom(payload.roomId);
+      const sessionInfo = roomManager.findRoomBySocket(socket.id);
+      if (!room || !sessionInfo || sessionInfo.room !== room || sessionInfo.sessionId !== room.hostSessionId) {
+        return callback({ success: false, error: 'Only the host can change the room password' });
+      }
+      if (typeof payload.password !== 'string' || payload.password.trim().length > 128) {
+        return callback({ success: false, error: 'Password must be 1-128 characters' });
+      }
+      room.setPassword(payload.password);
+      callback({ success: true, hasPassword: room.hasPassword() });
+    });
+
+    socket.on('room:getPassword', (payload, callback = () => {}) => {
+      const room = payload && roomManager.getRoom(payload.roomId);
+      const sessionInfo = roomManager.findRoomBySocket(socket.id);
+      if (!room || !sessionInfo || sessionInfo.room !== room || sessionInfo.sessionId !== room.hostSessionId) {
+        return callback({ success: false, error: 'Only the host can view the room password' });
+      }
+      callback({ success: true, hasPassword: room.hasPassword(), password: room.password || '' });
+    });
+
+    /**
      * Rejoin / Resynchronize Room after disconnect
      */
     socket.on('room:rejoin', (payload, callback = () => {}) => {
@@ -132,7 +186,13 @@ function setupSocketHandlers(io, roomManager, options = {}) {
           return callback({ success: false, error: 'Session ID is required for rejoining' });
         }
 
-        const room = roomManager.getRoom(roomId, true);
+        const room = roomManager.getRoom(roomId);
+        if (!room) {
+          return callback({ success: false, error: 'Room does not exist' });
+        }
+        if (room.hasPassword() && !room.verifyPassword(payload.password)) {
+          return callback({ success: false, error: 'WRONG_PASSWORD' });
+        }
         const name = sanitizeDisplayName(payload.name);
         const color = validateColor(payload.color);
 
@@ -185,12 +245,16 @@ function setupSocketHandlers(io, roomManager, options = {}) {
           return callback({ success: false, error: 'Room not found' });
         }
 
+        const sessionInfo = roomManager.findRoomBySocket(socket.id);
+        if (!sessionInfo || sessionInfo.room !== room) {
+          return callback({ success: false, error: 'Join the room before initializing state' });
+        }
+
         const stateVal = validateStatePayload(payload.initialState, maxPayloadBytes);
         if (!stateVal.valid) {
           return callback({ success: false, error: stateVal.error });
         }
 
-        const sessionInfo = roomManager.findRoomBySocket(socket.id);
         const userId = sessionInfo ? sessionInfo.sessionId : socket.id;
 
         const result = room.stateManager.initState(stateVal.value, userId);
@@ -236,13 +300,17 @@ function setupSocketHandlers(io, roomManager, options = {}) {
           return callback({ success: false, error: 'Room does not exist' });
         }
 
+        const sessionInfo = roomManager.findRoomBySocket(socket.id);
+        if (!sessionInfo || sessionInfo.room !== room) {
+          return callback({ success: false, error: 'Join the room before updating state' });
+        }
+
         const patchVal = validateStatePayload(payload.patch, maxPayloadBytes);
         if (!patchVal.valid) {
           return callback({ success: false, error: patchVal.error });
         }
 
         const opId = validateOpId(payload.opId);
-        const sessionInfo = roomManager.findRoomBySocket(socket.id);
         const userId = sessionInfo ? sessionInfo.sessionId : socket.id;
 
         const result = room.stateManager.applyPatch(patchVal.value, userId, opId);
@@ -295,6 +363,7 @@ function setupSocketHandlers(io, roomManager, options = {}) {
         if (!room) return;
 
         const sessionId = room.socketToSession.get(socket.id);
+        if (!sessionId) return;
         const participant = sessionId ? room.participants.get(sessionId) : null;
 
         // Broadcast to other users in room, excluding sender

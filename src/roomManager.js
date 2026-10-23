@@ -18,8 +18,37 @@ class Room {
     this.socketToSession = new Map(); // socketId -> sessionId
     this.cleanupTtlMs = options.cleanupTtlMs || 300000; // 5 minutes default
     this.cleanupTimer = null;
+    this.password = null; // Room password set by host
+    this.hostSessionId = null;
     this.createdAt = Date.now();
     this.lastActivityAt = Date.now();
+  }
+
+  /**
+   * Set password for this room (host only).
+   * @param {string} password
+   */
+  setPassword(password) {
+    this.password = typeof password === 'string' && password.trim() ? password.trim() : null;
+  }
+
+  /**
+   * Verify password for joining this room.
+   * Returns true if no password is set or if the password matches.
+   * @param {string} password
+   * @returns {boolean}
+   */
+  verifyPassword(password) {
+    if (!this.password) return true; // No password set
+    return this.password === (password || '').trim();
+  }
+
+  /**
+   * Check if room has a password.
+   * @returns {boolean}
+   */
+  hasPassword() {
+    return !!this.password;
   }
 
   touchActivity() {
@@ -42,6 +71,7 @@ class Room {
    */
   addOrUpdateParticipant({ sessionId, socketId, name, color }) {
     this.touchActivity();
+    if (!this.hostSessionId) this.hostSessionId = sessionId;
 
     // Map socket to session
     this.socketToSession.set(socketId, sessionId);

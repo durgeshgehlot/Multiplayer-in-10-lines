@@ -40,17 +40,6 @@ app.get('/room', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
-// Health check endpoint
-app.get('/health', (req, res) => {
-  res.status(200).json({
-    status: 'ok',
-    uptime: Math.floor(process.uptime()),
-    rooms: roomManager.getRoomCount(),
-    activeSockets: io.engine.clientsCount,
-    timestamp: new Date().toISOString()
-  });
-});
-
 // Socket.IO Server configuration
 const io = new Server(server, {
   cors: {
@@ -69,6 +58,17 @@ setupSocketHandlers(io, roomManager, {
   maxPayloadBytes: MAX_PAYLOAD_BYTES,
   stateRateLimit: RATE_LIMIT_STATE_PER_SEC,
   cursorRateLimit: RATE_LIMIT_CURSOR_PER_SEC
+});
+
+// Health check endpoint (must be after io and roomManager are initialized)
+app.get('/health', (req, res) => {
+  res.status(200).json({
+    status: 'ok',
+    uptime: Math.floor(process.uptime()),
+    rooms: roomManager.getRoomCount(),
+    activeSockets: io.engine.clientsCount,
+    timestamp: new Date().toISOString()
+  });
 });
 
 // Only bind if run directly

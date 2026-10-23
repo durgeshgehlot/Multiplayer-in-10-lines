@@ -92,6 +92,7 @@
 
       this.socket = null;
       this.roomId = null;
+      this.roomPassword = null;
       this.user = {
         name: options.name || 'Anonymous',
         color: options.color || null
@@ -182,19 +183,33 @@
         throw new Error('roomId is required to join');
       }
       this.roomId = roomId;
+      if (Object.prototype.hasOwnProperty.call(options, 'password')) {
+        this.roomPassword = options.password || null;
+      }
       if (options.name) this.user.name = options.name;
       if (options.color) this.user.color = options.color;
 
       this._setStatus('connecting');
 
       // Ensure Socket.IO client library is loaded
-      const ioConstructor = await ensureSocketIO(this.serverUrl);
+      let ioConstructor;
+      try {
+        ioConstructor = await ensureSocketIO(this.serverUrl);
+      } catch (err) {
+        this._setStatus('disconnected');
+        this._notify('error', err);
+        throw err;
+      }
 
       return new Promise((resolve, reject) => {
         if (this.socket) {
-          this.socket.disconnect();
           this.socket.removeAllListeners();
+          this.socket.disconnect();
         }
+
+        // Every explicit join (including each password retry) must authenticate
+        // with room:join. Recovery is valid only after that join succeeded.
+        let joinedSuccessfully = false;
 
         this.socket = ioConstructor(this.serverUrl, {
           transports: ['websocket', 'polling'],
@@ -208,7 +223,7 @@
 
         // Socket.IO lifecycle events
         this.socket.on('connect', () => {
-          if (this.status === 'reconnecting' || this.status === 'disconnected') {
+          if (joinedSuccessfully) {
             // Automatic reconnection recovery
             this._recoverSession();
           } else {
@@ -220,10 +235,12 @@
                 sessionId: this.sessionId,
                 name: this.user.name,
                 color: this.user.color,
+                password: this.roomPassword,
                 initialData: options.initialData || null
               },
               (response) => {
                 if (response && response.success) {
+                  joinedSuccessfully = true;
                   this.state = response.state || {};
                   this.revision = response.revision || 0;
                   this.users = response.participants || [];
@@ -338,6 +355,7 @@
           sessionId: this.sessionId,
           name: this.user.name,
           color: this.user.color,
+          password: this.roomPassword,
           lastRevision: this.revision
         },
         (response) => {
@@ -548,12 +566,29 @@
     }
 
     /**
+     * Emit a raw socket event (for custom events like room:checkPassword).
+     * @param {string} event
+     * @param {Object} data
+     * @param {Function} [callback]
+     */
+    emitRaw(event, data, callback) {
+      if (this.socket && this.socket.connected) {
+        this.socket.emit(event, data, callback);
+      } else {
+        if (callback) callback({ success: false, error: 'Not connected' });
+      }
+    }
+
+    /**
      * Leave the current room and clean up resources.
      */
     leave() {
       if (this.socket && this.roomId) {
         this.socket.emit('room:leave', { roomId: this.roomId });
+        this.socket.removeAllListeners();
+        this.socket.disconnect();
       }
+      this.socket = null;
       this.roomId = null;
       this.state = {};
       this.revision = 0;
@@ -633,6 +668,30 @@
      */
     connect(serverUrl, options = {}) {
       return new MultiplayerClient(serverUrl, options);
+    },
+    async checkRoomPassword(serverUrl, roomId) {
+      const ioConstructor = await ensureSocketIO(serverUrl || (typeof window !== 'undefined' ? window.location.origin : 'http://localhost:3000'));
+      const socket = ioConstructor(serverUrl || window.location.origin, { transports: ['websocket', 'polling'] });
+      return new Promise((resolve, reject) => {
+        let settled = false;
+        const finish = (error, value) => {
+          if (settled) return;
+          settled = true;
+          clearTimeout(timeoutId);
+          socket.disconnect();
+          if (error) reject(error);
+          else resolve(value);
+        };
+        const timeoutId = setTimeout(() => finish(new Error('Room password check timed out')), 10000);
+        socket.once('connect', () => socket.emit('room:checkPassword', { roomId }, (result) => {
+          if (result && result.success) finish(null, result.requiresPassword);
+          else finish(new Error(result?.error || 'Could not check room password'));
+        }));
+        socket.once('connect_error', (error) => finish(error));
+        socket.once('disconnect', (reason) => {
+          if (!settled) finish(new Error(`Disconnected while checking password: ${reason}`));
+        });
+      });
     },
     Client: MultiplayerClient
   };
